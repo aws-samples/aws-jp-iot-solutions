@@ -1,11 +1,7 @@
-## My Project
+## IoT Solution Samples
 
-TODO: Fill this README out!
-
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+このリポジトリでは、IoTのユースケースでよく課題としてあがることを解決する様なサンプルソースを公開しています。
+各サンプルの詳細や、セットアップの方法については、それぞれのディレクトリのREADMEを参照してください。
 
 ## Security
 
