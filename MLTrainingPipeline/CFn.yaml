@@ -1,0 +1,623 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: S3 Step Functions Pipeline
+
+Parameters:
+  InputBucketName:
+    Description: "Data input bucket"
+    Type: String
+  SubnetId:
+    Description: "Specify public subnet ID"
+    Type: String
+
+Resources:
+
+#################################################
+# Worker status table
+# Table attributes
+# - Partition Key: ObjectKey
+# - Sort Key: RequestTimestamp
+# - UpdateTimestamp: status updated timestamp
+# - JobStatus: Requested, WorkerInvoked, WorkerStarted, WorkerFinished
+# - WorkerResult: Success, Failed
+# - ResourceId: EC2 instance Id
+# - bucket: S3 bucket
+# - key: object key
+#################################################
+  WorkerStatusTable: 
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "ObjectKey"
+          AttributeType: "S"
+        - 
+          AttributeName: "RequestTimestamp"
+          AttributeType: "S"
+      KeySchema: 
+        - 
+          AttributeName: "ObjectKey"
+          KeyType: "HASH"
+        - 
+          AttributeName: "RequestTimestamp"
+          KeyType: "RANGE"
+      ProvisionedThroughput: 
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      TableName: !Join ["_", [!Ref "AWS::StackName", "WorkerStatus"]]
+
+#################################################
+# Instance Role to allow access S3/DynamoDB
+#################################################
+  WorkerInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ["_", [!Ref "AWS::StackName", "WorkerInstanceRole"]]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      Path: "/"
+
+  WorkerInstancePolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: !Join ["_", [!Ref "AWS::StackName", "WorkerInstancePolicy"]]
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action: 
+              - "dynamodb:Update*"
+              - "dynamodb:BatchWrite*"
+              - "dynamodb:PutItem"
+              - "dynamodb:GetItem"
+            Resource: !Join ["", ["arn:aws:dynamodb:*:*:table/", !Ref WorkerStatusTable]]
+      Roles:
+        - !Ref WorkerInstanceRole
+
+  WorkerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Join ["_", [!Ref "AWS::StackName", "WorkerInstanceProfile"]]
+      Path: "/"
+      Roles:
+      - !Ref WorkerInstanceRole
+
+#################################################
+# Worker resource invoke Lambda
+#################################################
+  WorkerInvokeLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Join ["_", [!Ref "AWS::StackName", "WorkerInvokeLambdaRole"]]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+
+  WorkerInvokeLambdaPolicy: 
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: !Join ["_", [!Ref "AWS::StackName", "WorkerInvokeLambdaPolicy"]]
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action: 
+              - "dynamodb:Update*"
+              - "dynamodb:BatchWrite*"
+              - "dynamodb:PutItem"
+            Resource: !Join ["", ["arn:aws:dynamodb:*:*:table/", !Ref WorkerStatusTable]]
+          - Effect: "Allow"
+            Action: 
+              - "iam:PassRole"
+            Resource: "*"
+      Roles:
+        - !Ref WorkerInvokeLambdaRole
+
+  WorkerInvokeLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3
+          from datetime import datetime as dt
+          import json
+          import os
+
+          TABLE_NAME = os.getenv("TABLE_NAME")
+          SUBNET_ID = os.getenv("SUBNET_ID")
+          INSTANCE_PROFILE = os.getenv("INSTANCE_PROFILE")
+          dynamodb = boto3.resource("dynamodb")
+          table = dynamodb.Table(TABLE_NAME)
+          ec2 = boto3.client('ec2', region_name=os.environ['AWS_REGION'])
+
+          def handler(event, context):
+              print(event)
+              
+              event["status"] = ""
+              event["instance_id"] = ""
+
+              work_dir = '/root/work'
+              user_data = f"""#!/bin/bash
+              mkdir -p {work_dir}
+              export log_file={work_dir}/execute.log
+              export TABLE_NAME={event["table"]}
+              export OBJECT_KEY="{event["object_key"]}"
+              export REQUEST_TIMESTAMP="{event["request_timestamp"]}"
+              echo "DynamoDB:$TABLE_NAME" >> $log_file
+              echo "DynamoDB object_key: $OBJECT_KEY" >> $log_file
+              echo "DynamoDB request_timestamp: $REQUEST_TIMESTAMP" >> $log_file
+              echo "pull docker image" >> $log_file
+              echo "run docker image" >> $log_file
+              echo "update DynamoDB status" >> $log_file
+              
+              """
+
+              ec2_instance = ec2.run_instances(
+                  BlockDeviceMappings=[{'Ebs':{'VolumeSize':20},"DeviceName" : '/dev/sda1'}],
+                  ImageId="ami-0fe22bffdec36361c",
+                  MinCount=1,
+                  MaxCount=1,
+                  InstanceType="t2.micro",
+                  IamInstanceProfile={"Name": INSTANCE_PROFILE},
+                  InstanceInitiatedShutdownBehavior='terminate',
+                  NetworkInterfaces=[
+                    {
+                      "SubnetId": SUBNET_ID,
+                      "DeviceIndex": 0,
+                      "AssociatePublicIpAddress": True
+                    }
+                  ],
+                  TagSpecifications=[
+                      {
+                          "ResourceType": "instance",
+                          "Tags": [
+                              {
+                                  "Key": "Name",
+                                  "Value": "Worker Instance"
+                              },
+                          ]
+                      },
+                  ],
+                  UserData = user_data
+              )
+              print(ec2_instance)
+              event["instance_id"] = ec2_instance['Instances'][0]['InstanceId']
+
+              now = dt.now().strftime('%Y-%m-%d %H:%M:%S')
+              response = table.update_item(
+                  Key={
+                      "ObjectKey": event["object_key"],
+                      "RequestTimestamp": event["request_timestamp"]
+                  },
+                  UpdateExpression="set UpdateTimestamp = :u, JobStatus = :s, ResourceId = :i",
+                      ExpressionAttributeValues={
+                          ":u": now,
+                          ":s": "WorkerInvoked",
+                          ":i": event["instance_id"]
+                      },
+                  ReturnValues="UPDATED_NEW"
+              )
+
+              event["status"] = "success"
+
+              return event
+      FunctionName: !Join ["_", [!Ref "AWS::StackName", "WorkerInvokeLambda"]]
+      Description: "This Lambda execute worker resource.(ex. EC2, Fargate)"
+      Handler: index.handler
+      Role: !GetAtt WorkerInvokeLambdaRole.Arn
+      Runtime: python3.8
+      Timeout: 60
+      Environment:
+        Variables:
+          TABLE_NAME: !Join ["_", [!Ref "AWS::StackName", "WorkerStatus"]]
+          SUBNET_ID: !Ref SubnetId
+          INSTANCE_PROFILE: !Join ["_", [!Ref "AWS::StackName", "WorkerInstanceProfile"]]
+
+  WorkerInvokeLambdaLogGroup: 
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Join ["", ["/aws/lambda/", !Ref WorkerInvokeLambda]]
+      RetentionInDays: 14
+
+#################################################
+# Worker result check Lambda
+#################################################
+  WorkerResultCheckLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Join ["_", [!Ref "AWS::StackName", "WorkerResultCheckLambdaRole"]]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+
+  WorkerResultCheckLambdaPolicy: 
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: !Join ["_", [!Ref "AWS::StackName", "WorkerResultCheckLambdaPolicy"]]
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action: 
+              - "dynamodb:Update*"
+              - "dynamodb:BatchWrite*"
+              - "dynamodb:PutItem"
+              - "dynamodb:GetItem"
+            Resource: !Join ["", ["arn:aws:dynamodb:*:*:table/", !Ref WorkerStatusTable]]
+          - Effect: "Allow"
+            Action: 
+              - "iam:PassRole"
+            Resource: "*"
+      Roles:
+        - !Ref WorkerResultCheckLambdaRole
+
+  WorkerResultCheckLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3
+          from datetime import datetime as dt
+          import json
+          import os
+
+          TABLE_NAME = os.getenv("TABLE_NAME")
+          SUBNET_ID = os.getenv("SUBNET_ID")
+          dynamodb = boto3.resource("dynamodb")
+          table = dynamodb.Table(TABLE_NAME)
+          ec2 = boto3.client('ec2', region_name=os.environ['AWS_REGION'])
+
+          def handler(event, context):
+              print(event)
+              event["status"] = "running"
+              response = table.get_item(
+                  Key={
+                      "ObjectKey": event["object_key"],
+                      "RequestTimestamp": event["request_timestamp"]
+                  }
+              )
+              print(response)
+
+              if not response["Item"]["JobStatus"] == "WorkerFinished":
+                  return event
+                  
+              response = ec2.terminate_instances(
+                  InstanceIds=[
+                      event["instance_id"]
+                  ]
+              )
+              print(response)
+
+              event["status"] = "success"
+              return event
+      FunctionName: !Join ["_", [!Ref "AWS::StackName", "WorkerResultCheckLambda"]]
+      Description: "This Lambda check the Worker results"
+      Handler: index.handler
+      Role: !GetAtt WorkerResultCheckLambdaRole.Arn
+      Runtime: python3.8
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Join ["_", [!Ref "AWS::StackName", "WorkerStatus"]]
+
+  WorkerResultCheckLambdaLogGroup: 
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Join ["", ["/aws/lambda/", !Ref WorkerResultCheckLambda]]
+      RetentionInDays: 14
+
+#################################################
+# Instance Role to allow access S3/DynamoDB
+#################################################
+  WorkerStatusTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Join ["_", [!Ref "AWS::StackName", "WorkerStatusTopic"]]
+
+#################################################
+# State Machine(Step Functions)
+#################################################
+  StepFunctionsExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Join ["_", [!Ref "AWS::StackName", "StepFunctionsExecutionRole"]]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - !Sub states.${AWS::Region}.amazonaws.com
+            Action: "sts:AssumeRole"
+      Path: "/"
+
+  StepFunctionsExecutionPolicies: 
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: !Join ["_", [!Ref "AWS::StackName", "StepFunctionsExecutionPolicies"]]
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action: 
+              - "lambda:InvokeFunction"
+              - "sns:Publish"
+            Resource: "*"
+          - Effect: "Allow"
+            Action: 
+              - "logs:CreateLogDelivery"
+              - "logs:GetLogDelivery"
+              - "logs:UpdateLogDelivery"
+              - "logs:DeleteLogDelivery"
+              - "logs:ListLogDeliveries"
+              - "logs:PutResourcePolicy"
+              - "logs:DescribeResourcePolicies"
+              - "logs:DescribeLogGroups"
+            Resource: "*"
+      Roles:
+        - !Ref StepFunctionsExecutionRole
+
+  WorkerPipelineStateMachine:
+    Type: "AWS::StepFunctions::StateMachine"
+    Properties:
+      StateMachineName: !Join ["_", [!Ref "AWS::StackName", "WorkerPipelineStateMachine"]]
+      RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
+      LoggingConfiguration:
+        Level: ALL
+        IncludeExecutionData: True
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt WorkerPipelineStateMachineLogGroup.Arn
+      DefinitionString:
+        !Sub
+          - |-
+            {
+              "Comment": "This state machine invoke Worker resource and notify on finish",
+              "StartAt": "InvokeWorkerResource",
+              "States": {
+                "InvokeWorkerResource": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "OutputPath": "$.Payload",
+                  "Parameters": {
+                    "Payload.$": "$",
+                    "FunctionName": "${WorkerLambdaArn}:$LATEST"
+                  },
+                  "Next": "VerifyInvoke"
+                },
+                "VerifyInvoke": {
+                  "Type": "Choice",
+                  "Choices": [
+                    {
+                      "Variable": "$.status",
+                      "StringMatches": "success",
+                      "Next": "WaitWorkerJob"
+                    }
+                  ],
+                  "Default": "PublishResult"
+                },
+                "WaitWorkerJob": {
+                    "Type": "Wait",
+                    "Seconds": 30,
+                    "Next": "CheckWorkerStatus"
+                },
+                "CheckWorkerStatus": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::lambda:invoke",
+                  "OutputPath": "$.Payload",
+                  "Parameters": {
+                    "Payload.$": "$",
+                    "FunctionName": "${ResultCheckLambdaArn}:$LATEST"
+                  },
+                  "Retry": [
+                    {
+                      "ErrorEquals": [
+                        "Lambda.ServiceException",
+                        "Lambda.AWSLambdaException",
+                        "Lambda.SdkClientException"
+                      ],
+                      "IntervalSeconds": 30,
+                      "MaxAttempts": 3,
+                      "BackoffRate": 2
+                    }
+                  ],
+                  "Next": "VerifyWorkerStatus"
+                },
+                "VerifyWorkerStatus": {
+                  "Type": "Choice",
+                  "Choices": [
+                    {
+                      "Variable": "$.status",
+                      "StringMatches": "success",
+                      "Next": "PublishResult"
+                    }
+                  ],
+                  "Default": "WaitWorkerJob"
+                },
+                "PublishResult": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::sns:publish",
+                  "Parameters": {
+                    "Message.$": "$",
+                    "TopicArn": "${SNSArn}"
+                  },
+                  "End": true
+                }
+              }
+            }
+          - WorkerLambdaArn: !GetAtt WorkerInvokeLambda.Arn
+            ResultCheckLambdaArn: !GetAtt WorkerResultCheckLambda.Arn
+            SNSArn: !Ref WorkerStatusTopic
+    DependsOn:
+      - StepFunctionsExecutionPolicies
+      - WorkerPipelineStateMachineLogGroup
+
+  WorkerPipelineStateMachineLogGroup: 
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Join ["", ["/aws/vendedlogs/states/", !Join ["_", [!Ref "AWS::StackName", "WorkerPipelineStateMachine-Logs"]]]]
+      RetentionInDays: 14
+
+#################################################
+# S3 bucket
+#################################################
+  InputDataBucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: 
+        Ref: InputBucketName
+      NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: "s3:ObjectCreated:*"
+              Filter:
+                S3Key:
+                  Rules:
+                    - Name: suffix
+                      Value: metainfo.json
+              Function: !GetAtt S3EventHandlerLambda.Arn
+
+#################################################
+# S3 event Lambda
+#################################################
+  S3EventHandlerLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Join ["_", [!Ref "AWS::StackName", "S3EventHandlerLambdaRole"]]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  S3EventHandlerLambdaPolicy: 
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: !Join ["_", [!Ref "AWS::StackName", "S3EventHandlerLambdaPolicy"]]
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: "Allow"
+            Action: 
+              - "dynamodb:Update*"
+              - "dynamodb:BatchWrite*"
+              - "dynamodb:PutItem"
+            Resource: !Join ["", ["arn:aws:dynamodb:*:*:table/", !Ref WorkerStatusTable]]
+          - Effect: "Allow"
+            Action: 
+              - "states:StartExecution"
+            Resource: !Ref WorkerPipelineStateMachine
+      Roles:
+        - !Ref S3EventHandlerLambdaRole
+    DependsOn: WorkerPipelineStateMachine
+
+  S3EventHandlerLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3
+          from datetime import datetime as dt
+          import json
+          import os
+
+          TABLE_NAME = os.getenv("TABLE_NAME")
+
+          dynamodb = boto3.resource("dynamodb")
+          table = dynamodb.Table(TABLE_NAME)
+          sf = boto3.client('stepfunctions')
+
+          def handler(event, context):
+              print(event)
+              
+              response = {
+                  "status"
+              }
+              try:
+                  for record in event["Records"]:
+                      now = dt.now().strftime('%Y-%m-%d %H:%M:%S')
+                      object_key = "{}/{}".format(record["s3"]["bucket"]["name"], record["s3"]["object"]["key"])
+                      item = {
+                          "ObjectKey": object_key,
+                          "RequestTimestamp": now,
+                          "UpdateTimestamp": now,
+                          "JobStatus": "Requested",
+                          "WorkerResult": "",
+                          "ResourceId": "",
+                          "bucket": record["s3"]["bucket"]["name"],
+                          "key": record["s3"]["object"]["key"]
+                      }
+                      table.put_item(
+                          Item=item
+                      )
+                      
+                      input_data = {
+                          "table": TABLE_NAME,
+                          "object_key": object_key,
+                          "request_timestamp": now
+                      }
+                      sf.start_execution(
+                          **{
+                              'input' : json.dumps(input_data),
+                              'stateMachineArn' : os.getenv("STATE_MACHINE_ARN")
+                          }
+                      )
+              except Exception as e:
+                  print(e)
+      FunctionName: !Join ["_", [!Ref "AWS::StackName", "S3EventHandlerLambda"]]
+      Description: "This Lambda executed by S3 put event. This start Step Functions"
+      Handler: index.handler
+      Role: !GetAtt S3EventHandlerLambdaRole.Arn
+      Runtime: python3.8
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Join ["_", [!Ref "AWS::StackName", "WorkerStatus"]]
+          STATE_MACHINE_ARN: !Ref WorkerPipelineStateMachine
+
+  S3EventHandlerLambdaLogGroup: 
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Join ["", ["/aws/lambda/", !Ref S3EventHandlerLambda]]
+      RetentionInDays: 14
+
+  S3EventHandlerLambdaInvokePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !GetAtt S3EventHandlerLambda.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !Join ["", ["arn:aws:s3:::", Ref: InputBucketName]]
