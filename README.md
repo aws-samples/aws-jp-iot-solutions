@@ -8,41 +8,41 @@ IoTの分野は「総合格闘技」と呼ばれるほど、ハードウェア�
 
 ![IoTの概念的なアーキテクチャ](IoTArchitecture.png)
 
-このリポジトリでは、このアーキテクチャの中に登場する機能の参考になるリソースやサンプルコードについて紹介しています。
+このリポジトリでは、このアーキテクチャの中に登場する機能の参考になるリソースやサンプルコードについて紹介しています。コンテンツによっては、外部で公開しているコンテンツを参照しています。
 
 ### デバイス接続
 
 - IoTデバイス
-  - [AWS IoT Device Client(サンプルソース)](https://github.com/awslabs/aws-iot-device-client)
+  - AWS IoT Device Client [[サンプルソース](https://github.com/awslabs/aws-iot-device-client)]
 - デバイスゲートウェイ
-  - [AWS IoT Greengrassとローカルデバイスの連携について(ブログ)](https://aws.amazon.com/jp/blogs/news/implementing-local-client-devices-with-aws-iot-greengrass/)
-  - [製造装置データ収集の選択肢(スライド)](https://pages.awscloud.com/rs/112-TZM-766/images/EV_aws-iot-deep-dive-5-915-topic2_Sep-2021.pdf)
+  - AWS IoT Greengrassとローカルデバイスの連携について [[ブログ](https://aws.amazon.com/jp/blogs/news/implementing-local-client-devices-with-aws-iot-greengrass/)]
+  - 製造装置データ収集の選択肢 [[スライド](https://pages.awscloud.com/rs/112-TZM-766/images/EV_aws-iot-deep-dive-5-915-topic2_Sep-2021.pdf)] [[動画](https://youtu.be/AGTZTqt7An8)]
 - ネットワーク
-  - [Disaster Recovery for AWS IoT(サンプルソース)](https://aws.amazon.com/jp/solutions/implementations/disaster-recovery-for-aws-iot/)
-  - [AWS IoT Coreをオンプレミス環境よ使う際のアーキテクチャ例(スライド)](https://pages.awscloud.com/rs/112-TZM-766/images/EV_aws-iot-deep-dive-5-915-topic3_Sep-2021.pdf)
+  - Disaster Recovery for AWS IoT [[サンプルソース](https://aws.amazon.com/jp/solutions/implementations/disaster-recovery-for-aws-iot/)] [[スライド](https://www.slideshare.net/AmazonWebServicesJapan/03aws-iotdr)] [[動画](https://youtu.be/d6clolYKF-E)]
+  - AWS IoT Coreをオンプレミス環境よ使う際のアーキテクチャ例 [[スライド](https://pages.awscloud.com/rs/112-TZM-766/images/EV_aws-iot-deep-dive-5-915-topic3_Sep-2021.pdf)] [[動画](https://youtu.be/4LOThx3Pd7A)]
 
 ### データ収集・分析
 
 - クラウドゲートウェイ
-  - [AWS IoT Core のカスタムドメインを利用してコネクテッドデバイスを AWS に移行する(ブログ)](https://aws.amazon.com/jp/blogs/news/migrating-devices-aws-iot-custom-domains/)
+  - AWS IoT Core のカスタムドメインを利用してコネクテッドデバイスを AWS に移行する [[ブログ](https://aws.amazon.com/jp/blogs/news/migrating-devices-aws-iot-custom-domains/)]
 - デバイスプロビジョニング
-  - [AWS IoTにおけるデバイスへの認証情報のプロビジョニング(スライド)](https://pages.awscloud.com/rs/112-TZM-766/images/EV_iot-deepdive-aws2_Sep-2020.pdf)
+  - AWS IoTにおけるデバイスへの認証情報のプロビジョニング [[スライド](https://pages.awscloud.com/rs/112-TZM-766/images/EV_iot-deepdive-aws2_Sep-2020.pdf)] [[動画](https://youtu.be/gcJwNEQ2eLY)]
 - デバイス管理＆操作
-  - [画角制御機能付きのセキュリティカメラを作ってみた(サンプルソース)](https://aws.amazon.com/jp/builders-flash/202109/angle-control-camera/)
-  - [リアルタイムにセンサーデータを表示しデバイス操作可能な IoT アプリを作る(サンプルソース)](https://aws.amazon.com/jp/builders-flash/202103/m5sticc-remote-control/)
+  - 画角制御機能付きのセキュリティカメラを作ってみた [[サンプルソース](https://aws.amazon.com/jp/builders-flash/202109/angle-control-camera/)]
+  - リアルタイムにセンサーデータを表示しデバイス操作可能な IoT アプリを作る [[サンプルソース](https://aws.amazon.com/jp/builders-flash/202103/m5sticc-remote-control/)]
 - IoTアプリケーション
-  - [自分だけ開ける「スマート宝箱」を作って、大事なモノをセキュアに保管してみた(サンプルソース)](https://aws.amazon.com/jp/builders-flash/202101/smart-treasure-box/)
+  - 自分だけ開ける「スマート宝箱」を作って、大事なモノをセキュアに保管してみた [[サンプルソース](https://aws.amazon.com/jp/builders-flash/202101/smart-treasure-box/)]
 
 ### 可視化・外部連携
 
 - BI & 外部サービス連携
-  - [AWS IoT を駆使してペットの気持ちを理解する(サンプルソース)](https://aws.amazon.com/jp/builders-flash/202105/smart-pet-communication/)
-  - [スマートライフを実現 ! 家電製品をクラウドでコントロールしてみた(サンプルソース)](https://aws.amazon.com/jp/builders-flash/202102/control-smart-home-appliance/)
-  - [AWS IoT でスマートホームを自作する 〜ドアフォン編〜(サンプルソース)](https://aws.amazon.com/jp/builders-flash/202004/smart-home/)
+  - AWS IoT を駆使してペットの気持ちを理解する [[サンプルソース](https://aws.amazon.com/jp/builders-flash/202105/smart-pet-communication/)]
+  - スマートライフを実現 ! 家電製品をクラウドでコントロールしてみた [[サンプルソース](https://aws.amazon.com/jp/builders-flash/202102/control-smart-home-appliance/)]
+  - AWS IoT でスマートホームを自作する 〜ドアフォン編〜 [[サンプルソース](https://aws.amazon.com/jp/builders-flash/202004/smart-home/)]
 - 分析＆機械学習
-  - [Jetson Nano と AWS IoT サービスで 一家団欒の時間を作ろう(サンプルソース)](https://aws.amazon.com/jp/builders-flash/202009/iot-greengrass-family/)
+  - Jetson Nano と AWS IoT サービスで 一家団欒の時間を作ろう [[サンプルソース](https://aws.amazon.com/jp/builders-flash/202009/iot-greengrass-family/)]
 - ユーザーアプリケーション
-  - [Raspberry Pi で簡単おうちセキュリティカメラを 作ってみた(サンプルソース)](https://aws.amazon.com/jp/builders-flash/202010/raspi-security-camera/)
+  - Raspberry Pi で簡単おうちセキュリティカメラを 作ってみた [[サンプルソース](https://aws.amazon.com/jp/builders-flash/202010/raspi-security-camera/)]
 
 ## Security
 
